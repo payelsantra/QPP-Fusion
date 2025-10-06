@@ -287,6 +287,7 @@ def main():
     measures = parse_measures(args.metrics)
 
     # Run evaluation (PyTerrier Experiment)
+
     print("Running evaluation with PyTerrier...")
     results = pt.Experiment(
         all_runs,

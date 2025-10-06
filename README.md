@@ -26,5 +26,5 @@ python3 Combsum.py --res_path data/RL/2019 --qrels data/qrels/2019.qrels --topic
 
 ## ProbFuse
 ```
-python3 ProbFuse.py --train_res_path data/RL/2019 --test_res_path data/RL/2020 --train_qrels data/qrels/2019.qrels --test_qrels data/qrels/2020.qrels --topics data/qrels/2019.queries --variant judged --x 50 --L 100 --eps 1e-6
+python3 ProbFuse.py --train_res_path data/RL/2019 --test_res_path data/RL/2020 --train_qrels data/qrels/2019.qrels --test_qrels data/qrels/2020.qrels --topics data/qrels/2020.queries --variant judged --x 50 --L 100 --eps 1e-6
 ```
