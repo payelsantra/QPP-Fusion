@@ -85,14 +85,18 @@ def combmnz_fusion(runs):
 
 def weighted_combmnz_fusion(runs, qpp_data, qpp_model_name):
     """Weighted CombMNZ using selected QPP model"""
-    # find the index of desired QPP model
-    qpp_index = None
-    for i, name in model_name_dict.items():
-        if name.lower() == qpp_model_name.lower():
-            qpp_index = i
-            break
-    if qpp_index is None:
-        raise ValueError(f"Invalid QPP model '{qpp_model_name}'. Must be one of: {list(model_name_dict.values())}")
+
+    if qpp_model_name=="fusion":
+        qpp_index=-1
+    else:
+        # find the index of desired QPP model
+        qpp_index = None
+        for i, name in model_name_dict.items():
+            if name.lower() == qpp_model_name.lower():
+                qpp_index = i
+                break
+        if qpp_index is None:
+            raise ValueError(f"Invalid QPP model '{qpp_model_name}'. Must be one of: {list(model_name_dict.values())}")
 
     fused = defaultdict(list)
     all_qids = sorted(set.union(*[set(df.qid.unique()) for df in runs.values()]))
@@ -102,21 +106,25 @@ def weighted_combmnz_fusion(runs, qpp_data, qpp_model_name):
         doc_counts = defaultdict(int)
 
         for ranker, df in runs.items():
+            w = 0
             sub = df[df.qid == qid]
             if qid not in qpp_data or ranker not in qpp_data[qid]:
                 w = 1.0
+            elif not qpp_index==-1:
+                w = qpp_data[qid][ranker][qpp_index]  # QPP weight for (qid, ranker)a
             else:
-                w = qpp_data[qid][ranker][qpp_index]  # QPP weight for (qid, ranker)
+                for j, name in model_name_dict.items():
+                    w += qpp_data[qid][ranker][j]  # Average QPP weight for (qid, ranker)
+                w = w/model_name_dict.size()
 
-            for _, row in sub.iterrows():
-                doc_scores[row.docno] += w * row.score
-                doc_counts[row.docno] += 1
+        for _, row in sub.iterrows():
+            doc_scores[row.docno] += w * row.score
+            doc_counts[row.docno] += 1
 
         for docid, score_sum in doc_scores.items():
             fused[qid].append((docid, score_sum * doc_counts[docid]))
 
     return fused
-
 
 # -------------------------------
 #  Writer
