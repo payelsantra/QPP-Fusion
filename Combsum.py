@@ -45,9 +45,9 @@ def load_runs(res_path):
 def load_qpp_estimates(qpp_path):
     """Load QPP files: {qid: {ranker: [qpp_scores...]}}"""
     qpp_data = defaultdict(dict)
-    files = [os.path.join(qpp_path, f) for f in os.listdir(qpp_path) if f.endswith(".znorm.qpp")]
+    files = [os.path.join(qpp_path, f) for f in os.listdir(qpp_path) if f.endswith(".mmnorm.qpp")]
     for f in files:
-        ranker = os.path.basename(f).replace(".res.znorm.qpp", "")
+        ranker = os.path.basename(f).replace(".res.mmnorm.qpp", "")
         with open(f, "r") as fin:
             for line in fin:
                 parts = line.strip().split("\t")
@@ -104,9 +104,9 @@ def weighted_combmnz_fusion(runs, qpp_data, qpp_model_name):
     for qid in all_qids:
         doc_scores = defaultdict(float)
         doc_counts = defaultdict(int)
+        w = 0
 
         for ranker, df in runs.items():
-            w = 0
             sub = df[df.qid == qid]
             if qid not in qpp_data or ranker not in qpp_data[qid]:
                 w = 1.0
@@ -115,8 +115,12 @@ def weighted_combmnz_fusion(runs, qpp_data, qpp_model_name):
             else:
                 for j, name in model_name_dict.items():
                     w += qpp_data[qid][ranker][j]  # Average QPP weight for (qid, ranker)
-                w = w/model_name_dict.size()
 
+        if qpp_index==-1:
+            w = w / len(model_name_dict)
+
+        w = w/len(runs)
+ 
         for _, row in sub.iterrows():
             doc_scores[row.docno] += w * row.score
             doc_counts[row.docno] += 1
