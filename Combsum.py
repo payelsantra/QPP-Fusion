@@ -1,172 +1,133 @@
-#!/usr/bin/env python3
-# -*- coding: utf-8 -*-
-"""
-CombMNZ and Weighted CombMNZ with QPP-based weights
----------------------------------------------------
-Supports:
-    - Standard CombMNZ
-    - Weighted CombMNZ (W-CombMNZ) using per-query QPP estimates
-
-QPP inputs:
-    Each .qpp file contains per-query QPP scores for all rankers.
-    You can select one QPP model using --qpp_model (e.g., NQC, SCNQC, etc.)
-"""
-
+import pyterrier as pt
+import pandas as pd
 import os
 import argparse
-import pandas as pd
 from collections import defaultdict
 
-# -------------------------------
-#  QPP model mapping
-# -------------------------------
-model_name_dict = {
-    0:"SMV", 1:"Sigma_max", 2:"Sigma(%)", 3:"NQC", 4:"UEF", 5:"RSD",
-    6:"QPP-PRP", 7:"WIG", 8:"SCNQC", 9:"QV-NQC", 10:"DM",
-    11:"NQA-QPP", 12:"BERTQPP"
-}
-
-
-# -------------------------------
-#  Loaders
-# -------------------------------
-def load_runs(res_path):
-    """Load normalized run files (.norm.res) into a dict of DataFrames."""
-    runs = {}
-    files = [f for f in os.listdir(res_path) if f.endswith(".norm.res")]
-    for f in files:
-        ranker = f.replace(".norm.res", "")
-        df = pd.read_csv(os.path.join(res_path, f), sep=r"\s+",
-                         names=["qid", "iter", "docno", "rank", "score", "runid"])
-        runs[ranker] = df
-    return runs
-
+model_name_dict={0:"SMV",1:"Sigma_max",2:"Sigma(%)",3:"NQC",4:"UEF",5:"RSD",
+                 6:"QPP-PRP",7:"WIG",8:"SCNQC",9:"QV-NQC",10:"DM",
+                 11:"NQA-QPP",12:"BERTQPP"}
 
 def load_qpp_estimates(qpp_path):
-    """Load QPP files: {qid: {ranker: [qpp_scores...]}}"""
     qpp_data = defaultdict(dict)
-    files = [os.path.join(qpp_path, f) for f in os.listdir(qpp_path) if f.endswith(".mmnorm.qpp")]
+    files = [os.path.join(qpp_path, f) for f in os.listdir(qpp_path) if f.endswith(".mmnorm.qpp")] #zscore 
     for f in files:
-        ranker = os.path.basename(f).replace(".res.mmnorm.qpp", "")
+        ranker = os.path.basename(f).replace(".res.mmnorm.qpp","")   #.res.mmnorm.qpp minmax  .res.znorm.qpp
         with open(f, "r") as fin:
             for line in fin:
                 parts = line.strip().split("\t")
                 if len(parts) < 2:
                     continue
                 qid = parts[0]
-                scores = [float(x) for x in parts[1:]]  # all QPP methods
+                scores = [float(x) for x in parts[1:]]  # all QPP methods in columns
                 qpp_data[qid][ranker] = scores
     return qpp_data
 
+def load_runs(res_path):
+    runs = {}
+    files = [f for f in os.listdir(res_path) if f.endswith(".100.norm.res")] #<-- z-score. minmax--> #100.minmax.res
+    for f in files:
+        ranker = f.replace(".norm.res","")
+        df = pd.read_csv(os.path.join(res_path, f), sep=r"\s+", 
+                         names=["qid","iter","docno","rank","score","runid"])
+        runs[ranker] = df
+    return runs
 
-# -------------------------------
-#  Fusion functions
-# -------------------------------
-def combmnz_fusion(runs):
-    """Standard CombMNZ"""
-    fused = defaultdict(list)
-    all_qids = sorted(set.union(*[set(df.qid.unique()) for df in runs.values()]))
-
-    for qid in all_qids:
+def build_combsum_run(runs, qpp_data=None, qpp_method_index=None):
+    records = []
+    rankers = list(runs.keys())
+    for qid in runs[rankers[0]]["qid"].unique():
         doc_scores = defaultdict(float)
-        doc_counts = defaultdict(int)
-
-        for ranker, df in runs.items():
-            sub = df[df.qid == qid]
-            for _, row in sub.iterrows():
-                doc_scores[row.docno] += row.score
-                doc_counts[row.docno] += 1
-
-        for docid, score_sum in doc_scores.items():
-            fused[qid].append((docid, score_sum * doc_counts[docid]))
-
-    return fused
-
-
-def weighted_combmnz_fusion(runs, qpp_data, qpp_model_name):
-    """Weighted CombMNZ using selected QPP model"""
-
-    if qpp_model_name=="fusion":
-        qpp_index=-1
-    else:
-        # find the index of desired QPP model
-        qpp_index = None
-        for i, name in model_name_dict.items():
-            if name.lower() == qpp_model_name.lower():
-                qpp_index = i
-                break
-        if qpp_index is None:
-            raise ValueError(f"Invalid QPP model '{qpp_model_name}'. Must be one of: {list(model_name_dict.values())}")
-
-    fused = defaultdict(list)
-    all_qids = sorted(set.union(*[set(df.qid.unique()) for df in runs.values()]))
-
-    for qid in all_qids:
-        doc_scores = defaultdict(float)
-        doc_counts = defaultdict(int)
-        w = 0
-
-        for ranker, df in runs.items():
-            sub = df[df.qid == qid]
-            if qid not in qpp_data or ranker not in qpp_data[qid]:
-                w = 1.0
-            elif not qpp_index==-1:
-                w = qpp_data[qid][ranker][qpp_index]  # QPP weight for (qid, ranker)a
-            else:
-                for j, name in model_name_dict.items():
-                    w += qpp_data[qid][ranker][j]  # Average QPP weight for (qid, ranker)
-
-        if qpp_index==-1:
-            w = w / len(model_name_dict)
-
-        w = w/len(runs)
- 
-        for _, row in sub.iterrows():
-            doc_scores[row.docno] += w * row.score
-            doc_counts[row.docno] += 1
-
-        for docid, score_sum in doc_scores.items():
-            fused[qid].append((docid, score_sum * doc_counts[docid]))
-
-    return fused
-
-# -------------------------------
-#  Writer
-# -------------------------------
-def write_runfile(fused, output_path, tag="combmnz"):
-    with open(output_path, "w") as fout:
-        for qid in sorted(fused.keys()):
-            ranked = sorted(fused[qid], key=lambda x: x[1], reverse=True)
-            for rank, (docid, score) in enumerate(ranked, start=1):
-                fout.write(f"{qid} Q0 {docid} {rank} {score:.6f} {tag}\n")
-    print(f"✅ Fused run written to {output_path}")
+        for ranker in rankers:
+            df_q = runs[ranker][runs[ranker]["qid"] == int(qid)]
+            if df_q.empty:
+                continue
+            weight = 1.0
+            if qpp_data and qpp_method_index is not None:
+                try:
+                    weight = qpp_data[str(qid)][ranker][qpp_method_index]
+                except KeyError:
+                    weight = 0.0
+            # add score (weighted or not)
+            for _, row in df_q.iterrows():
+                doc_scores[row["docno"]] += weight * row["score"]
+        if doc_scores:
+            sorted_docs = sorted(doc_scores.items(), key=lambda x: x[1], reverse=True)
+            for rank, (docno, score) in enumerate(sorted_docs, start=1):
+                runid = "W-CombSUM" if qpp_data else "CombSUM"
+                records.append([qid,"Q0",docno,rank,score,runid])
+    return pd.DataFrame(records, columns=["qid","iter","docno","rank","score","runid"])
 
 
-# -------------------------------
-#  Main
-# -------------------------------
 def main():
-    parser = argparse.ArgumentParser(description="CombMNZ / Weighted CombMNZ with QPP")
-    parser.add_argument("--res_path", required=True, help="Directory with normalized run files (.norm.res)")
-    parser.add_argument("--qpp_path", help="Directory containing .qpp files")
-    parser.add_argument("--output", required=True, help="Output fused run file path")
-    parser.add_argument("--qpp_model", default=None, help="QPP model name (e.g., NQC, SCNQC, WIG)")
+    parser = argparse.ArgumentParser(description="Flexible QPP evaluation")
+    parser.add_argument("--res_path", type=str, required=True)
+    parser.add_argument("--qpp_path", type=str, required=True)
+    parser.add_argument("--qrels", type=str, required=True)
+    parser.add_argument("--topics", type=str, required=True)
+    parser.add_argument("--metrics", type=str, nargs='+', default=["map","ndcg@10","recip_rank"])
+    parser.add_argument("--strategy", type=str, choices=["combsum","wcombsum"], required=True,
+                        help="Choose fusion strategy: combsum | wcombsum")
+    parser.add_argument("--save_path", type=str, default=None,
+                        help="Optional: path to save fused run(s) in TREC format")
     args = parser.parse_args()
 
     runs = load_runs(args.res_path)
+    qpp_data = load_qpp_estimates(args.qpp_path)
 
-    if args.qpp_model:
-        if not args.qpp_path:
-            raise ValueError("QPP path must be provided when using weighted fusion.")
-        qpp_data = load_qpp_estimates(args.qpp_path)
-        fused = weighted_combmnz_fusion(runs, qpp_data, args.qpp_model)
-        tag = f"wcombmnz-{args.qpp_model.lower()}"
-    else:
-        fused = combmnz_fusion(runs)
-        tag = "combmnz"
+    qrels = pt.io.read_qrels(args.qrels)
+    topics = pd.read_csv(args.topics, sep="\t", names=["qid","query"]).astype({'qid':'str'})
 
-    write_runfile(fused, args.output, tag=tag)
+    sample_scores = next(iter(next(iter(qpp_data.values())).values()))
+    num_qpp_methods = len(sample_scores)
+    print(f"Detected {num_qpp_methods} QPP methods (columns) per ranker")
 
+    measures = []
+    for m in args.metrics:
+        if m.lower() == "map":
+            measures.append(pt.measures.AP(rel=2))
+        elif "ndcg@10" in m.lower():
+            k = int(m.split("@")[1]) if "@" in m else None
+            measures.append(pt.measures.nDCG(cutoff=k) if k else pt.measures.nDCG())
+        elif m.lower() == "recip_rank":
+            measures.append(pt.measures.RR())
+
+    all_runs, all_names = [], []
+
+    if args.save_path:
+        os.makedirs(args.save_path, exist_ok=True)
+
+    if args.strategy == "combsum":
+        df = build_combsum_run(runs)
+        all_runs.append(df)
+        all_names.append("CombSUM")
+        if args.save_path:
+            save_file = os.path.join(args.save_path, "combsum_trec20.res")
+            df.to_csv(save_file, sep=" ", header=False, index=False)
+            print(f"[Saved] Fused run written to: {save_file}")
+
+    elif args.strategy == "wcombsum":
+        for i in range(num_qpp_methods):
+            df = build_combsum_run(runs, qpp_data=qpp_data, qpp_method_index=i)
+            all_runs.append(df)
+            all_names.append(f"W-CombSUM-QPP-{model_name_dict[i]}")
+            if args.save_path:
+                save_file = os.path.join(args.save_path, f"wcombsum_qpp_{model_name_dict[i]}_trec2020.res")
+                df.to_csv(save_file, sep=" ", header=False, index=False)
+                print(f"[Saved] Weighted fused run written to: {save_file}")
+
+    # Always add baselines
+    all_runs.extend(runs.values())
+    all_names.extend(runs.keys())
+
+    results = pt.Experiment(
+        all_runs,
+        qrels=qrels,
+        topics=topics,
+        eval_metrics=measures,
+        names=all_names
+    )
+    print(results)
 
 if __name__ == "__main__":
     main()
